@@ -1,31 +1,60 @@
 import { NextResponse } from 'next/server';
 
 /**
- * Format pesan absen:
- * Nama Steam     : Kawa
- * On Duty        : 12.09
- * Off Duty       : 14.09
+ * Format pesan absen Discord yang dideteksi:
+ * 
+ * Nama Steam  : Kawa
+ * On Duty     : 22.13
+ * Off Duty    : 22.52 (duar)
  */
 function parseDutyMessage(content, createdAt, authorName) {
-  const steamMatch = content.match(/Nama\s*Steam\s*:\s*([^\r\n]+)/i);
-  const onDutyMatch = content.match(/On\s*Duty\s*:\s*([0-2]?[0-9][.:][0-5][0-9])/i);
-  const offDutyMatch = content.match(/Off\s*Duty\s*:\s*([0-2]?[0-9][.:][0-5][0-9])/i);
+  // 1. Bersihkan karakter pembungkus kode (```) jika ada
+  const cleanContent = content.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '');
 
-  if (!onDutyMatch || !offDutyMatch) {
+  // 2. Regex untuk Nama Steam
+  const steamMatch = cleanContent.match(/Nama\s*Steam\s*:\s*([^\r\n]+)/i);
+  
+  // 3. Regex On Duty: misal 22.13 atau 22:13
+  const onDutyMatch = cleanContent.match(/On\s*Duty\s*:\s*([0-2]?[0-9][.:][0-5][0-9])/i);
+
+  if (!onDutyMatch) {
     return null;
   }
 
-  const steamName = steamMatch ? steamMatch[1].trim() : authorName || 'Kawa';
+  const steamName = steamMatch ? steamMatch[1].trim() : (authorName || 'Kawa');
   const onDutyStr = onDutyMatch[1].replace('.', ':');
-  const offDutyStr = offDutyMatch[1].replace('.', ':');
 
+  // 4. Regex Off Duty: bisa 22.52, bisa ada kata tambahan misal (duar), atau kosong
+  const offDutyMatch = cleanContent.match(/Off\s*Duty\s*:\s*([0-2]?[0-9][.:][0-5][0-9])?/i);
+  const rawOffDuty = offDutyMatch && offDutyMatch[1] ? offDutyMatch[1].replace('.', ':') : null;
+
+  // Catatan keterangan di dalam kurung jika ada (misal: duar)
+  const noteMatch = cleanContent.match(/Off\s*Duty\s*:[^\r\n]*?\(([^)]+)\)/i);
+  const note = noteMatch ? noteMatch[1].trim() : null;
+
+  // Jika Off Duty masih kosong (sedang on duty)
+  if (!rawOffDuty) {
+    return {
+      id: Math.random().toString(36).substring(2, 9),
+      steamName,
+      onDuty: onDutyStr,
+      offDuty: 'Sedang Duty 🟢',
+      durationMinutes: 0,
+      durationText: 'Aktif',
+      isOngoing: true,
+      note,
+      createdAt,
+    };
+  }
+
+  const offDutyStr = rawOffDuty;
   const [onHour, onMin] = onDutyStr.split(':').map(Number);
   const [offHour, offMin] = offDutyStr.split(':').map(Number);
 
   let onTotalMinutes = onHour * 60 + onMin;
   let offTotalMinutes = offHour * 60 + offMin;
 
-  // Lewat tengah malam (contoh 23.30 ke 01.30)
+  // Lewat tengah malam (contoh On 23:57 -> Off 02:32)
   if (offTotalMinutes < onTotalMinutes) {
     offTotalMinutes += 24 * 60;
   }
@@ -34,24 +63,33 @@ function parseDutyMessage(content, createdAt, authorName) {
   const hours = Math.floor(durationMinutes / 60);
   const minutes = durationMinutes % 60;
 
+  let durationText = '';
+  if (hours > 0 && minutes > 0) {
+    durationText = `${hours} Jam ${minutes} Menit`;
+  } else if (hours > 0) {
+    durationText = `${hours} Jam`;
+  } else {
+    durationText = `${minutes} Menit`;
+  }
+
   return {
     id: Math.random().toString(36).substring(2, 9),
     steamName,
     onDuty: onDutyStr,
     offDuty: offDutyStr,
     durationMinutes,
-    durationText: `${hours} Jam ${minutes > 0 ? minutes + ' Menit' : ''}`.trim(),
+    durationText,
+    isOngoing: false,
+    note,
     createdAt,
   };
 }
 
-// Menghitung rentang Senin 00:00:00 sampai Minggu 23:59:59 minggu ini (WIB / Lokal)
+// Menghitung rentang Senin 00:00:00 s/d Minggu 23:59:59 (WIB)
 function getMondayToSundayRange(date = new Date()) {
   const current = new Date(date);
-  const day = current.getDay(); // 0: Minggu, 1: Senin, ..., 6: Sabtu
+  const day = current.getDay();
 
-  // Hitung selisih hari ke hari Senin
-  // Jika hari Minggu (0), maka mundur 6 hari ke Senin sebelumnya
   const distanceToMonday = day === 0 ? -6 : 1 - day;
 
   const startOfWeek = new Date(current);
@@ -69,83 +107,48 @@ function formatMinutes(totalMinutes) {
   const hours = Math.floor(totalMinutes / 60);
   const mins = totalMinutes % 60;
   if (hours === 0 && mins === 0) return '0 Jam';
-  return `${hours} Jam ${mins > 0 ? mins + ' Menit' : ''}`.trim();
+  if (hours > 0 && mins > 0) return `${hours} Jam ${mins} Menit`;
+  if (hours > 0) return `${hours} Jam`;
+  return `${mins} Menit`;
 }
 
 export async function GET() {
-  const token = process.env.DISCORD_BOT_TOKEN;
+  const token = process.env.DISCORD_USER_TOKEN || process.env.DISCORD_BOT_TOKEN;
   const channelId = process.env.DISCORD_CHANNEL_ID;
-  const targetSteamName = (process.env.TARGET_STEAM_NAME || 'Kawa').toLowerCase();
 
   const now = new Date();
   const { startOfWeek, endOfWeek } = getMondayToSundayRange(now);
-
   const rangeLabel = `${startOfWeek.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} - ${endOfWeek.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}`;
 
-  // Mode Demo/Mock jika env belum diset
   if (!token || !channelId) {
-    const mockData = [
-      {
-        id: 'mock-1',
-        steamName: 'Kawa',
-        onDuty: '12:09',
-        offDuty: '14:09',
-        durationMinutes: 120,
-        durationText: '2 Jam',
-        createdAt: new Date().toISOString(), // Minggu ini
-      },
-      {
-        id: 'mock-2',
-        steamName: 'Kawa',
-        onDuty: '20:15',
-        offDuty: '23:45',
-        durationMinutes: 210,
-        durationText: '3 Jam 30 Menit',
-        createdAt: new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString(), // Kemarin
-      },
-      {
-        id: 'mock-3',
-        steamName: 'Kawa',
-        onDuty: '15:00',
-        offDuty: '17:30',
-        durationMinutes: 150,
-        durationText: '2 Jam 30 Menit',
-        createdAt: new Date(now.getTime() - 9 * 24 * 60 * 60 * 1000).toISOString(), // Minggu lalu
-      }
-    ];
-
-    const weeklyRecords = mockData.filter(item => {
-      const itemDate = new Date(item.createdAt);
-      return itemDate >= startOfWeek && itemDate <= endOfWeek;
-    });
-
-    const weeklyMinutes = weeklyRecords.reduce((acc, curr) => acc + curr.durationMinutes, 0);
-    const allTimeMinutes = mockData.reduce((acc, curr) => acc + curr.durationMinutes, 0);
-
     return NextResponse.json({
       status: 'demo',
-      message: 'DISCORD_BOT_TOKEN atau DISCORD_CHANNEL_ID belum dikonfigurasi di Vercel / .env.local. Menampilkan data preview.',
-      targetSteamName,
+      message: 'DISCORD_USER_TOKEN atau DISCORD_CHANNEL_ID belum dikonfigurasi di Vercel.',
+      targetSteamName: 'Kawa',
       weekRange: rangeLabel,
       summary: {
-        weeklyHours: formatMinutes(weeklyMinutes),
-        weeklySessions: weeklyRecords.length,
-        weeklyMinutes,
-        allTimeHours: formatMinutes(allTimeMinutes),
-        allTimeSessions: mockData.length,
+        weeklyHours: '0 Jam',
+        weeklySessions: 0,
+        weeklyMinutes: 0,
+        allTimeHours: '0 Jam',
+        allTimeSessions: 0,
       },
-      records: mockData,
-      weeklyRecords,
+      records: [],
+      weeklyRecords: [],
     });
   }
 
   try {
+    const cleanToken = token.trim().replace(/^["']|["']$/g, '');
+    const authHeader = cleanToken.toLowerCase().startsWith('bot ') ? cleanToken : cleanToken;
+
     const response = await fetch(
-      `https://discord.com/api/v10/channels/${channelId}/messages?limit=100`,
+      `https://discord.com/api/v10/channels/${channelId.trim()}/messages?limit=100`,
       {
         headers: {
-          Authorization: `Bot ${token}`,
+          Authorization: authHeader,
           'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         },
         cache: 'no-store',
       }
@@ -154,7 +157,7 @@ export async function GET() {
     if (!response.ok) {
       const errText = await response.text();
       return NextResponse.json(
-        { error: 'Gagal mengambil pesan dari Discord', details: errText },
+        { error: 'Gagal membaca channel Discord', details: errText, status: response.status },
         { status: response.status }
       );
     }
@@ -165,10 +168,16 @@ export async function GET() {
     for (const msg of messages) {
       if (!msg.content) continue;
       const parsed = parseDutyMessage(msg.content, msg.timestamp, msg.author?.username);
+      
+      // FILTER KETAT KHUSUS "KAWA":
       if (parsed) {
-        if (targetSteamName === 'all' || parsed.steamName.toLowerCase().includes(targetSteamName)) {
+        const isSteamKawa = parsed.steamName.toLowerCase().includes('kawa');
+        const isAuthorKawa = (msg.author?.username || '').toLowerCase().includes('kawa');
+
+        if (isSteamKawa || isAuthorKawa) {
           allRecords.push({
             ...parsed,
+            steamName: 'Kawa',
             discordAuthor: msg.author?.username,
             messageId: msg.id,
           });
@@ -176,7 +185,7 @@ export async function GET() {
       }
     }
 
-    // Filter khusus Senin - Minggu (Minggu ini)
+    // Filter khusus rentang Senin - Minggu minggu ini
     const weeklyRecords = allRecords.filter(item => {
       const itemDate = new Date(item.createdAt);
       return itemDate >= startOfWeek && itemDate <= endOfWeek;
@@ -187,14 +196,14 @@ export async function GET() {
 
     return NextResponse.json({
       status: 'success',
-      targetSteamName,
+      targetSteamName: 'Kawa',
       weekRange: rangeLabel,
       summary: {
         weeklyHours: formatMinutes(weeklyMinutes),
-        weeklySessions: weeklyRecords.length,
+        weeklySessions: weeklyRecords.filter(r => !r.isOngoing).length,
         weeklyMinutes,
         allTimeHours: formatMinutes(allTimeMinutes),
-        allTimeSessions: allRecords.length,
+        allTimeSessions: allRecords.filter(r => !r.isOngoing).length,
       },
       weeklyRecords,
       records: allRecords,
