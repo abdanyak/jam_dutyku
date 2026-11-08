@@ -1,20 +1,8 @@
 import { NextResponse } from 'next/server';
 
-/**
- * Format pesan absen Discord yang dideteksi:
- * 
- * Nama Steam  : Kawa
- * On Duty     : 22.13
- * Off Duty    : 22.52 (duar)
- */
 function parseDutyMessage(content, createdAt, authorName) {
-  // 1. Bersihkan karakter pembungkus kode (```) jika ada
   const cleanContent = content.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '');
-
-  // 2. Regex untuk Nama Steam
   const steamMatch = cleanContent.match(/Nama\s*Steam\s*:\s*([^\r\n]+)/i);
-  
-  // 3. Regex On Duty: misal 22.13 atau 22:13
   const onDutyMatch = cleanContent.match(/On\s*Duty\s*:\s*([0-2]?[0-9][.:][0-5][0-9])/i);
 
   if (!onDutyMatch) {
@@ -24,15 +12,12 @@ function parseDutyMessage(content, createdAt, authorName) {
   const steamName = steamMatch ? steamMatch[1].trim() : (authorName || 'Kawa');
   const onDutyStr = onDutyMatch[1].replace('.', ':');
 
-  // 4. Regex Off Duty: bisa 22.52, bisa ada kata tambahan misal (duar), atau kosong
   const offDutyMatch = cleanContent.match(/Off\s*Duty\s*:\s*([0-2]?[0-9][.:][0-5][0-9])?/i);
   const rawOffDuty = offDutyMatch && offDutyMatch[1] ? offDutyMatch[1].replace('.', ':') : null;
 
-  // Catatan keterangan di dalam kurung jika ada (misal: duar)
   const noteMatch = cleanContent.match(/Off\s*Duty\s*:[^\r\n]*?\(([^)]+)\)/i);
   const note = noteMatch ? noteMatch[1].trim() : null;
 
-  // Jika Off Duty masih kosong (sedang on duty)
   if (!rawOffDuty) {
     return {
       id: Math.random().toString(36).substring(2, 9),
@@ -54,7 +39,6 @@ function parseDutyMessage(content, createdAt, authorName) {
   let onTotalMinutes = onHour * 60 + onMin;
   let offTotalMinutes = offHour * 60 + offMin;
 
-  // Lewat tengah malam (contoh On 23:57 -> Off 02:32)
   if (offTotalMinutes < onTotalMinutes) {
     offTotalMinutes += 24 * 60;
   }
@@ -85,22 +69,29 @@ function parseDutyMessage(content, createdAt, authorName) {
   };
 }
 
-// Menghitung rentang Senin 00:00:00 s/d Minggu 23:59:59 (WIB)
-function getMondayToSundayRange(date = new Date()) {
-  const current = new Date(date);
-  const day = current.getDay();
+// Konversi akurat ke WIB (UTC+7)
+function getWIBDate(dateInput) {
+  const d = new Date(dateInput);
+  const utc = d.getTime() + (d.getTimezoneOffset() * 60000);
+  return new Date(utc + (7 * 60 * 60 * 1000));
+}
+
+// Menghitung Senin s/d Minggu berdasarkan WIB
+function getWIBMondayToSundayRange(referenceDate = new Date()) {
+  const nowWIB = getWIBDate(referenceDate);
+  const day = nowWIB.getDay();
 
   const distanceToMonday = day === 0 ? -6 : 1 - day;
 
-  const startOfWeek = new Date(current);
-  startOfWeek.setDate(current.getDate() + distanceToMonday);
-  startOfWeek.setHours(0, 0, 0, 0);
+  const startWIB = new Date(nowWIB);
+  startWIB.setDate(nowWIB.getDate() + distanceToMonday);
+  startWIB.setHours(0, 0, 0, 0);
 
-  const endOfWeek = new Date(startOfWeek);
-  endOfWeek.setDate(startOfWeek.getDate() + 6);
-  endOfWeek.setHours(23, 59, 59, 999);
+  const endWIB = new Date(startWIB);
+  endWIB.setDate(startWIB.getDate() + 6);
+  endWIB.setHours(23, 59, 59, 999);
 
-  return { startOfWeek, endOfWeek };
+  return { startWIB, endWIB };
 }
 
 function formatMinutes(totalMinutes) {
@@ -116,9 +107,9 @@ export async function GET() {
   const token = process.env.DISCORD_USER_TOKEN || process.env.DISCORD_BOT_TOKEN;
   const channelId = process.env.DISCORD_CHANNEL_ID;
 
-  const now = new Date();
-  const { startOfWeek, endOfWeek } = getMondayToSundayRange(now);
-  const rangeLabel = `${startOfWeek.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} - ${endOfWeek.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  const { startWIB, endWIB } = getWIBMondayToSundayRange(new Date());
+
+  const rangeLabel = `${startWIB.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} - ${endWIB.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}`;
 
   if (!token || !channelId) {
     return NextResponse.json({
@@ -169,7 +160,6 @@ export async function GET() {
       if (!msg.content) continue;
       const parsed = parseDutyMessage(msg.content, msg.timestamp, msg.author?.username);
       
-      // FILTER KETAT KHUSUS "KAWA":
       if (parsed) {
         const isSteamKawa = parsed.steamName.toLowerCase().includes('kawa');
         const isAuthorKawa = (msg.author?.username || '').toLowerCase().includes('kawa');
@@ -185,10 +175,10 @@ export async function GET() {
       }
     }
 
-    // Filter khusus rentang Senin - Minggu minggu ini
+    // Filter menggunakan waktu WIB
     const weeklyRecords = allRecords.filter(item => {
-      const itemDate = new Date(item.createdAt);
-      return itemDate >= startOfWeek && itemDate <= endOfWeek;
+      const itemWIB = getWIBDate(item.createdAt);
+      return itemWIB >= startWIB && itemWIB <= endWIB;
     });
 
     const weeklyMinutes = weeklyRecords.reduce((acc, curr) => acc + curr.durationMinutes, 0);
