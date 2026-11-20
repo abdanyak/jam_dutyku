@@ -21,7 +21,7 @@ function parseDutyMessage(content, createdAt, authorName) {
     return null;
   }
 
-  const steamName = steamMatch ? steamMatch[1].trim() : (authorName || 'Kawa');
+  const steamName = steamMatch ? steamMatch[1].trim() : (authorName || 'Unknown');
   const onDutyStr = onDutyMatch[1].replace('.', ':');
 
   // 4. Ekstrak Off Duty
@@ -175,7 +175,33 @@ export async function GET() {
       status: 'demo',
       message: 'DISCORD_BOT_TOKEN / DISCORD_USER_TOKEN atau DISCORD_CHANNEL_ID belum dikonfigurasi.',
       targetSteamName,
+      weeklyTargetHours,
+      dailyTargetHours,
       weekRange: rangeLabel,
+      uniquePlayers: ['Kawa'],
+      playerSummaries: [
+        {
+          name: 'Kawa',
+          weeklyMinutes: 0,
+          weeklyHoursText: '0 Jam',
+          weeklySessions: 0,
+          weeklyRemainingMinutes: weeklyTargetMinutes,
+          weeklyRemainingText: formatMinutes(weeklyTargetMinutes),
+          weeklyAchieved: false,
+          weeklyPercentage: 0,
+          todayMinutes: 0,
+          todayHoursText: '0 Jam',
+          todaySessions: 0,
+          dailyRemainingMinutes: dailyTargetMinutes,
+          dailyRemainingText: formatMinutes(dailyTargetMinutes),
+          dailyAchieved: false,
+          dailyPercentage: 0,
+          allTimeMinutes: 0,
+          allTimeHoursText: '0 Jam',
+          allTimeSessions: 0,
+          isCurrentlyDuty: false,
+        }
+      ],
       summary: {
         weeklyHours: '0 Jam',
         weeklySessions: 0,
@@ -223,29 +249,34 @@ export async function GET() {
 
     const messages = await response.json();
     const allRecords = [];
-    const targetQuery = targetSteamName.toLowerCase().trim();
 
+    // Baca dan parse seluruh pesan duty dari semua player di channel
     for (const msg of messages) {
       if (!msg.content) continue;
-      const parsed = parseDutyMessage(msg.content, msg.timestamp, msg.author?.username);
+      const authorName = msg.author?.global_name || msg.author?.username || 'Unknown';
+      const parsed = parseDutyMessage(msg.content, msg.timestamp, authorName);
       
       if (parsed) {
-        const isSteamMatch = targetQuery === 'all' || parsed.steamName.toLowerCase().includes(targetQuery);
-        const isAuthorMatch = targetQuery === 'all' || (msg.author?.username || '').toLowerCase().includes(targetQuery);
-
-        if (isSteamMatch || isAuthorMatch) {
-          allRecords.push({
-            ...parsed,
-            steamName: parsed.steamName || targetSteamName,
-            discordAuthor: msg.author?.username,
-            messageId: msg.id,
-          });
-        }
+        allRecords.push({
+          ...parsed,
+          discordAuthor: authorName,
+          messageId: msg.id,
+        });
       }
     }
 
+    // Ekstrak daftar nama player unik yang ditemukan
+    const playerMap = new Map();
+    for (const rec of allRecords) {
+      const key = rec.steamName.toLowerCase().trim();
+      if (!playerMap.has(key)) {
+        playerMap.set(key, rec.steamName.trim());
+      }
+    }
+    const uniquePlayers = Array.from(playerMap.values()).sort((a, b) => a.localeCompare(b));
+
     // Filter menggunakan WAKTU INDONESIA BARAT (WIB)
-    // 1. Rekap Minggu Ini (Senin 00:00 - Minggu 23:59)
+    // 1. Rekap Minggu Ini (Senin 00:00 - Minggu 23:59 WIB)
     const weeklyRecords = allRecords.filter(item => {
       const itemWIB = getWIBDate(item.createdAt);
       return itemWIB >= startWIB && itemWIB <= endWIB;
@@ -257,11 +288,56 @@ export async function GET() {
       return itemWIB >= todayStartWIB && itemWIB <= todayEndWIB;
     });
 
+    // Hitung ringkasan statistik per player secara otomatis
+    const playerSummaries = uniquePlayers.map(name => {
+      const key = name.toLowerCase().trim();
+      const pRecords = allRecords.filter(r => r.steamName.toLowerCase().trim() === key);
+      const pWeekly = pRecords.filter(r => {
+        const d = getWIBDate(r.createdAt);
+        return d >= startWIB && d <= endWIB;
+      });
+      const pToday = pWeekly.filter(r => {
+        const d = getWIBDate(r.createdAt);
+        return d >= todayStartWIB && d <= todayEndWIB;
+      });
+
+      const pWeeklyMinutes = pWeekly.reduce((sum, r) => sum + r.durationMinutes, 0);
+      const pTodayMinutes = pToday.reduce((sum, r) => sum + r.durationMinutes, 0);
+      const pAllTimeMinutes = pRecords.reduce((sum, r) => sum + r.durationMinutes, 0);
+
+      const pWeeklyRemaining = Math.max(0, weeklyTargetMinutes - pWeeklyMinutes);
+      const pDailyRemaining = Math.max(0, dailyTargetMinutes - pTodayMinutes);
+
+      return {
+        name,
+        weeklyMinutes: pWeeklyMinutes,
+        weeklyHoursText: formatMinutes(pWeeklyMinutes),
+        weeklySessions: pWeekly.filter(r => !r.isOngoing).length,
+        weeklyRemainingMinutes: pWeeklyRemaining,
+        weeklyRemainingText: pWeeklyRemaining === 0 ? 'Target Tercapai 🎉' : formatMinutes(pWeeklyRemaining),
+        weeklyAchieved: pWeeklyMinutes >= weeklyTargetMinutes,
+        weeklyPercentage: Math.min(100, Math.round((pWeeklyMinutes / weeklyTargetMinutes) * 100)),
+
+        todayMinutes: pTodayMinutes,
+        todayHoursText: formatMinutes(pTodayMinutes),
+        todaySessions: pToday.filter(r => !r.isOngoing).length,
+        dailyRemainingMinutes: pDailyRemaining,
+        dailyRemainingText: pDailyRemaining === 0 ? 'Target Tercapai 🎉' : formatMinutes(pDailyRemaining),
+        dailyAchieved: pTodayMinutes >= dailyTargetMinutes,
+        dailyPercentage: Math.min(100, Math.round((pTodayMinutes / dailyTargetMinutes) * 100)),
+
+        allTimeMinutes: pAllTimeMinutes,
+        allTimeHoursText: formatMinutes(pAllTimeMinutes),
+        allTimeSessions: pRecords.filter(r => !r.isOngoing).length,
+        isCurrentlyDuty: pRecords.some(r => r.isOngoing),
+      };
+    });
+
     const weeklyMinutes = weeklyRecords.reduce((acc, curr) => acc + curr.durationMinutes, 0);
     const todayMinutes = todayRecords.reduce((acc, curr) => acc + curr.durationMinutes, 0);
     const allTimeMinutes = allRecords.reduce((acc, curr) => acc + curr.durationMinutes, 0);
 
-    // Hitung sisa/kekurangan target
+    // Hitung sisa/kekurangan target keseluruhan tim
     const weeklyRemainingMinutes = Math.max(0, weeklyTargetMinutes - weeklyMinutes);
     const dailyRemainingMinutes = Math.max(0, dailyTargetMinutes - todayMinutes);
 
@@ -291,7 +367,11 @@ export async function GET() {
     return NextResponse.json({
       status: 'success',
       targetSteamName,
+      weeklyTargetHours,
+      dailyTargetHours,
       weekRange: rangeLabel,
+      uniquePlayers,
+      playerSummaries,
       summary: {
         weeklyHours: formatMinutes(weeklyMinutes),
         weeklySessions: weeklyRecords.filter(r => !r.isOngoing).length,
