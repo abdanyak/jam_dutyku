@@ -3,7 +3,12 @@
 Aplikasi pemantau jam duty otomatis langsung dari channel Discord tanpa database tambahan! Dirancang untuk langsung di-deploy ke **Vercel** via **GitHub**.
 
 ## 🚀 Fitur Utama
+- **Multi-Player Support**: Otomatis mendeteksi semua nama Steam / anggota yang mengirim pesan absen di channel Discord.
+- **Player Selector & Leaderboard**: Bisa memilih player tertentu lewat dropdown/chip di dashboard atau melihat rekap seluruh tim sekaligus.
 - **Zero Database**: Membaca langsung riwayat chat dari Discord channel melalui Discord REST API.
+- **Target Mingguan & Harian**:
+  - Target Mingguan: 21 Jam/Minggu (WIB) dengan kalkulasi kekurangan jam.
+  - Target Harian: Minimal 3 Jam/Hari (WIB) dengan status kekurangan jam harian.
 - **Deteksi Format Otomatis**: Mendeteksi chat dengan format:
   ```text
   Nama Steam     : Kawa
