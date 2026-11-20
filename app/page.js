@@ -3,12 +3,16 @@
 import { useState, useEffect } from 'react';
 import { 
   Clock, 
+  Calendar, 
   User, 
   TrendingUp, 
   RefreshCw, 
   ShieldCheck, 
   AlertCircle,
-  CalendarDays
+  CalendarDays,
+  Target,
+  CheckCircle2,
+  Flame
 } from 'lucide-react';
 
 export default function Home() {
@@ -41,6 +45,7 @@ export default function Home() {
     fetchData();
   }, []);
 
+  // Format tanggal Indonesia tetap & konsisten
   const formatDate = (isoString) => {
     try {
       const d = new Date(isoString);
@@ -56,11 +61,15 @@ export default function Home() {
     }
   };
 
-  const displayedRecords = viewFilter === 'weekly' 
-    ? (data?.weeklyRecords || []) 
+  const displayedRecords = viewFilter === 'today'
+    ? (data?.todayRecords || [])
+    : viewFilter === 'weekly'
+    ? (data?.weeklyRecords || [])
     : (data?.records || []);
 
   const isCurrentlyDuty = data?.records?.some(r => r.isOngoing);
+  const weeklyTarget = data?.targets?.weekly;
+  const dailyTarget = data?.targets?.daily;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-8">
@@ -78,10 +87,10 @@ export default function Home() {
                   Duty Tracker
                 </h1>
                 <span className="text-xs bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-full font-medium">
-                  Senin - Minggu
+                  Target: 21 Jam/Minggu &bull; Min 3 Jam/Hari
                 </span>
                 {isCurrentlyDuty && (
-                  <span className="inline-flex items-center gap-1.5 text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-medium">
+                  <span className="inline-flex items-center gap-1.5 text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-medium animate-pulse">
                     <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
                     Sedang On Duty
                   </span>
@@ -132,49 +141,187 @@ export default function Home() {
           </div>
         )}
 
-        {/* Highlight Stats Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="p-5 bg-gradient-to-br from-indigo-950/40 to-slate-900 border border-indigo-500/30 rounded-2xl relative overflow-hidden shadow-lg">
-            <div className="flex items-center justify-between text-indigo-300 mb-2">
-              <span className="text-xs font-semibold uppercase tracking-wider">Jam Duty Minggu Ini</span>
-              <CalendarDays className="w-4 h-4 text-indigo-400" />
+        {/* TARGET TRACKING CARDS (Mingguan 21 Jam & Harian Min 3 Jam) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          
+          {/* Card Target Mingguan */}
+          <div className="p-5 bg-gradient-to-br from-indigo-950/50 via-slate-900 to-slate-900 border border-indigo-500/30 rounded-2xl relative overflow-hidden shadow-lg space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Target className="w-5 h-5 text-indigo-400" />
+                <span className="text-xs font-bold uppercase tracking-wider text-indigo-300">
+                  Target Mingguan ({weeklyTarget?.targetHours || 21} Jam)
+                </span>
+              </div>
+              {weeklyTarget?.isAchieved ? (
+                <span className="inline-flex items-center gap-1 text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-semibold">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Target Tercapai 🎉
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2.5 py-0.5 rounded-full font-semibold">
+                  Kurang: {weeklyTarget?.remainingText || '21 Jam'}
+                </span>
+              )}
             </div>
-            <div className="text-3xl font-black text-white">
-              {data?.summary?.weeklyHours || '0 Jam'}
+
+            <div className="flex items-baseline justify-between">
+              <div>
+                <div className="text-3xl font-black text-white">
+                  {data?.summary?.weeklyHours || '0 Jam'}
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Dari target {weeklyTarget?.targetHours || 21} Jam minggu ini
+                </p>
+              </div>
+              <div className="text-right">
+                <div className="text-2xl font-bold text-indigo-400 font-mono">
+                  {weeklyTarget?.percentage ?? 0}%
+                </div>
+                <p className="text-xs text-slate-400">
+                  {data?.summary?.weeklySessions ?? 0} sesi tercatat
+                </p>
+              </div>
             </div>
-            <p className="text-xs text-indigo-200/70 mt-1">
-              {data?.summary?.weeklySessions ?? 0} sesi selesai tercatat
-            </p>
+
+            {/* Progress Bar */}
+            <div className="space-y-1.5">
+              <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden p-0.5">
+                <div 
+                  className={`h-full rounded-full transition-all duration-700 ${
+                    weeklyTarget?.isAchieved 
+                      ? 'bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.5)]' 
+                      : 'bg-gradient-to-r from-indigo-500 to-indigo-400'
+                  }`}
+                  style={{ width: `${Math.min(100, weeklyTarget?.percentage ?? 0)}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-400">
+                  {weeklyTarget?.isAchieved ? 'Target mingguan sudah tercukupi!' : 'Sisa minggu ini'}
+                </span>
+                <span className={`font-semibold ${weeklyTarget?.isAchieved ? 'text-emerald-400' : 'text-amber-300'}`}>
+                  {weeklyTarget?.remainingText || 'Memuat...'}
+                </span>
+              </div>
+            </div>
           </div>
 
-          <div className="p-5 bg-slate-900/80 border border-slate-800 rounded-2xl relative overflow-hidden">
-            <div className="flex items-center justify-between text-slate-400 mb-2">
+          {/* Card Target Harian */}
+          <div className="p-5 bg-gradient-to-br from-amber-950/30 via-slate-900 to-slate-900 border border-amber-500/30 rounded-2xl relative overflow-hidden shadow-lg space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Flame className="w-5 h-5 text-amber-400" />
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-300">
+                  Target Hari Ini (Min. {dailyTarget?.targetHours || 3} Jam)
+                </span>
+              </div>
+              {dailyTarget?.isAchieved ? (
+                <span className="inline-flex items-center gap-1 text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-semibold">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Target Tercapai 🎉
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-xs bg-rose-500/20 text-rose-300 border border-rose-500/30 px-2.5 py-0.5 rounded-full font-semibold">
+                  Kurang: {dailyTarget?.remainingText || '3 Jam'}
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-baseline justify-between">
+              <div>
+                <div className="text-3xl font-black text-white">
+                  {data?.summary?.todayHours || '0 Jam'}
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Dari target minimal {dailyTarget?.targetHours || 3} Jam hari ini
+                </p>
+              </div>
+              <div className="text-right">
+                <div className="text-2xl font-bold text-amber-400 font-mono">
+                  {dailyTarget?.percentage ?? 0}%
+                </div>
+                <p className="text-xs text-slate-400">
+                  {data?.summary?.todaySessions ?? 0} sesi hari ini
+                </p>
+              </div>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="space-y-1.5">
+              <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden p-0.5">
+                <div 
+                  className={`h-full rounded-full transition-all duration-700 ${
+                    dailyTarget?.isAchieved 
+                      ? 'bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.5)]' 
+                      : 'bg-gradient-to-r from-amber-500 to-amber-400'
+                  }`}
+                  style={{ width: `${Math.min(100, dailyTarget?.percentage ?? 0)}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-400">
+                  {dailyTarget?.isAchieved ? 'Target harian sudah beres!' : 'Sisa hari ini'}
+                </span>
+                <span className={`font-semibold ${dailyTarget?.isAchieved ? 'text-emerald-400' : 'text-rose-300'}`}>
+                  {dailyTarget?.remainingText || 'Memuat...'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        {/* Secondary Info Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="p-4 bg-slate-900/80 border border-slate-800 rounded-xl">
+            <div className="flex items-center justify-between text-slate-400 mb-1">
               <span className="text-xs font-medium uppercase tracking-wider">Total Keseluruhan</span>
               <TrendingUp className="w-4 h-4 text-emerald-400" />
             </div>
-            <div className="text-3xl font-extrabold text-white">
+            <div className="text-2xl font-bold text-white">
               {data?.summary?.allTimeHours || '0 Jam'}
             </div>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-slate-400 mt-0.5">
               Dari {data?.summary?.allTimeSessions ?? 0} sesi selesai
             </p>
           </div>
 
-          <div className="p-5 bg-slate-900/80 border border-slate-800 rounded-2xl relative overflow-hidden">
-            <div className="flex items-center justify-between text-slate-400 mb-2">
+          <div className="p-4 bg-slate-900/80 border border-slate-800 rounded-xl">
+            <div className="flex items-center justify-between text-slate-400 mb-1">
               <span className="text-xs font-medium uppercase tracking-wider">Target Player</span>
               <User className="w-4 h-4 text-sky-400" />
             </div>
-            <div className="text-3xl font-extrabold text-white truncate">
+            <div className="text-2xl font-bold text-white truncate">
               {data?.targetSteamName ? data.targetSteamName.toUpperCase() : 'KAWA'}
             </div>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-slate-400 mt-0.5">
               Sesuai pesan Discord kamu
+            </p>
+          </div>
+
+          <div className="p-4 bg-slate-900/80 border border-slate-800 rounded-xl">
+            <div className="flex items-center justify-between text-slate-400 mb-1">
+              <span className="text-xs font-medium uppercase tracking-wider">Status Duty</span>
+              <Clock className="w-4 h-4 text-indigo-400" />
+            </div>
+            <div className="text-2xl font-bold text-white">
+              {isCurrentlyDuty ? (
+                <span className="text-emerald-400 text-lg flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping inline-block"></span>
+                  Sedang On Duty
+                </span>
+              ) : (
+                <span className="text-slate-400 text-lg">Off Duty</span>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {isCurrentlyDuty ? 'Sesi absen masih aktif' : 'Belum absen On Duty'}
             </p>
           </div>
         </div>
 
-        {/* Tabel Terkunci Kokoh (Tidak Bergoyang) */}
+        {/* Table Box - FIXED COLUMN WIDTH */}
         <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
           <div className="p-5 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
@@ -187,7 +334,18 @@ export default function Home() {
               </p>
             </div>
 
+            {/* Filter Selector Tabs */}
             <div className="inline-flex p-1 bg-slate-950 border border-slate-800 rounded-xl text-xs">
+              <button
+                onClick={() => setViewFilter('today')}
+                className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
+                  viewFilter === 'today'
+                    ? 'bg-indigo-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Hari Ini ({data?.todayRecords?.length ?? 0})
+              </button>
               <button
                 onClick={() => setViewFilter('weekly')}
                 className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
@@ -211,6 +369,7 @@ export default function Home() {
             </div>
           </div>
 
+          {/* Table dengan table-fixed & lebar statis agar stabil 100% */}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm text-slate-300 table-fixed min-w-[700px]">
               <thead className="bg-slate-800/60 text-slate-400 uppercase text-xs font-semibold">
@@ -281,7 +440,7 @@ export default function Home() {
         </div>
 
         <footer className="text-center text-xs text-slate-500 pt-4 pb-8">
-          Duty Tracker &bull; Mendeteksi format Discord &bull; Siklus Senin - Minggu WIB
+          Duty Tracker &bull; Target: 21 Jam/Minggu &bull; Min. 3 Jam/Hari (WIB)
         </footer>
 
       </div>
